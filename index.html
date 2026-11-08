@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ROLLING BALL — ELVISMUNYA2026</title>
+<style>
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#061c35;font-family:Arial,sans-serif;color:white}
+#game{display:block;width:100%;height:100%}
+#brand{position:fixed;top:14px;left:16px;font-weight:900;letter-spacing:2px;text-shadow:0 2px 8px #001}
+#brand small{display:block;font-size:10px;letter-spacing:1px;color:#bcecff;margin-top:4px}
+#hud{position:fixed;top:14px;right:16px;text-align:right;background:#03172dcc;padding:10px 14px;border:1px solid #8be7ff55;border-radius:12px;line-height:1.6}
+#center{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#00152a88}
+#card{width:min(92vw,470px);padding:26px;background:linear-gradient(145deg,#07385c,#06182f);border:1px solid #8be7ff88;border-radius:20px;text-align:center;box-shadow:0 20px 70px #0009}
+h1{margin:0 0 8px;font-size:38px;letter-spacing:2px}p{color:#d2f3ff;line-height:1.5}
+button{border:0;border-radius:12px;padding:13px 20px;margin:6px;background:#20c5e9;color:#002033;font-size:16px;font-weight:900;cursor:pointer}
+button.secondary{background:#e9faff}
+#help{font-size:12px;color:#b8e9f8}
+#message{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);padding:10px 16px;border-radius:10px;background:#03172dcc;text-align:center;font-size:13px}
+@media(max-width:600px){#hud{font-size:12px}h1{font-size:30px}}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="brand">ROLLING BALL<small>PRODUCED BY ELVISMUNYA2026</small></div>
+<div id="hud">LEVEL <b id="level">1</b><br>COINS <b id="coins">0</b><br><span id="players">1 PLAYER</span></div>
+<div id="center"><div id="card">
+<h1>ROLLING BALL</h1>
+<p>Race above the sea! Roll, dodge obstacles, collect coins and reach the finish.</p>
+<button id="one">1 PLAYER</button><button id="two" class="secondary">2 PLAYERS</button>
+<p id="help">PLAYER 1: W A S D / ARROWS<br>PLAYER 2: ARROW KEYS<br>Press SPACE to jump · R to restart</p>
+</div></div>
+<div id="message">Stay on the track — don't fall into the sea!</div>
+<script type="module">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+const canvas=document.querySelector('#game');
+const renderer=new THREE.WebGLRenderer({canvas,antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setSize(innerWidth,innerHeight);
+renderer.shadowMap.enabled=true;
+renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(0x65d8f2);
+scene.fog=new THREE.Fog(0x65d8f2,35,115);
+const camera=new THREE.PerspectiveCamera(62,innerWidth/innerHeight,.1,250);
+const hemi=new THREE.HemisphereLight(0xcaf5ff,0x173c62,2.0);scene.add(hemi);
+const sun=new THREE.DirectionalLight(0xffffff,2.2);sun.position.set(-12,25,10);sun.castShadow=true;scene.add(sun);
+const sea=new THREE.Mesh(new THREE.PlaneGeometry(300,300),new THREE.MeshStandardMaterial({color:0x087db4,roughness:.35,metalness:.15}));
+sea.rotation.x=-Math.PI/2;sea.position.y=-3;scene.add(sea);
+const keys={};
+addEventListener('keydown',e=>{keys[e.code]=true;if(['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code))e.preventDefault();if(e.code==='KeyR')reset()});
+addEventListener('keyup',e=>keys[e.code]=false);
+let mode=1,started=false,level=1,coinCount=0,balls=[],track=[],coins=[],hazards=[],finish;
+const mat=(color,roughness=.55,metalness=0)=>new THREE.MeshStandardMaterial({color,roughness,metalness});
+const trackMat=mat(0x16b8d2,.35),edgeMat=mat(0xf4fbff,.4),goldMat=mat(0xffc928,.25,.35);
+function makeBall(x,z,color){
+ const group=new THREE.Group();scene.add(group);
+ const sphere=new THREE.Mesh(new THREE.SphereGeometry(.62,32,24),mat(color,.24,.15));sphere.castShadow=true;sphere.position.y=.62;group.add(sphere);
+ const ring=new THREE.Mesh(new THREE.TorusGeometry(.32,.12,12,32),mat(0xffffff,.25,.4));ring.rotation.x=Math.PI/2;ring.position.y=.62;group.add(ring);
+ return {group,sphere,ring,x,z,vx:0,vz:0,vy:0,score:0,grounded:true,color};
+}
+function clearWorld(){for(const o of [...track,...coins,...hazards])scene.remove(o);if(finish)scene.remove(finish);track=[];coins=[];hazards=[];balls.forEach(b=>scene.remove(b.group));balls=[]}
+function buildCourse(){
+ clearWorld();
+ // A winding elevated road assembled from broad segments.
+ const path=[];
+ for(let i=0;i<90;i++){
+   const z=12-i*1.25;
+   const x=Math.sin(i*.105)*4.2 + Math.sin(i*.035)*2;
+   path.push(new THREE.Vector3(x,0,z));
+ }
+ for(let i=0;i<path.length-1;i++){
+   const a=path[i],b=path[i+1],mid=a.clone().add(b).multiplyScalar(.5);
+   const dir=b.clone().sub(a);const length=dir.length()+.12;
+   const road=new THREE.Mesh(new THREE.BoxGeometry(7,.55,length),trackMat);
+   road.position.set(mid.x,0,mid.z);road.rotation.y=Math.atan2(dir.x,dir.z);road.receiveShadow=true;road.castShadow=true;scene.add(road);track.push(road);
+   for(const side of [-1,1]){
+     const rail=new THREE.Mesh(new THREE.BoxGeometry(.22,.55,length),edgeMat);
+     rail.position.set(mid.x+side*3.45,.36,mid.z);rail.rotation.y=road.rotation.y;scene.add(rail);track.push(rail);
+   }
+ }
+ // Obstacles and collectible coins placed along the route.
+ for(let i=8;i<84;i+=7){
+   const p=path[i];
+   const block=new THREE.Mesh(new THREE.BoxGeometry(1.2,1.3,1.2),mat(i%2?0xff5d65:0x8b68ff));
+   block.position.set(p.x+(i%3-1)*1.65,.9,p.z);block.rotation.y=.35;block.castShadow=true;scene.add(block);hazards.push(block);
+ }
+ for(let i=4;i<88;i+=3){
+   const p=path[i];
+   const c=new THREE.Mesh(new THREE.TorusGeometry(.38,.12,12,24),goldMat);
+   c.position.set(p.x+(i%2?1.3:-1.3),1.35,p.z);c.rotation.x=Math.PI/2;scene.add(c);coins.push(c);
+ }
+ const p=path[path.length-1];
+ finish=new THREE.Group();finish.position.set(p.x,0,p.z-1);scene.add(finish);
+ const postmat=mat(0xffffff);
+ for(const x of [-2.8,2.8]){const post=new THREE.Mesh(new THREE.BoxGeometry(.18,3,.18),postmat);post.position.set(x,1.5,0);finish.add(post)}
+ const banner=new THREE.Mesh(new THREE.BoxGeometry(5.8,.8,.15),mat(0xffd83d));banner.position.y=2.6;finish.add(banner);
+ balls.push(makeBall(path[0].x,10,0xff5a73));
+ if(mode===2)balls.push(makeBall(path[0].x+1.4,11.5,0x61e7ff));
+}
+function reset(){level=1;coinCount=0;document.querySelector('#level').textContent=level;document.querySelector('#coins').textContent=coinCount;buildCourse()}
+function start(n){mode=n;started=true;document.querySelector('#center').style.display='none';document.querySelector('#players').textContent=n===1?'1 PLAYER':'2 PLAYERS';reset()}
+document.querySelector('#one').onclick=()=>start(1);document.querySelector('#two').onclick=()=>start(2);
+function nearestPath(z){return 12-z}
+let lastTime=0,won=false;
+function update(dt){
+ if(!started)return;
+ coins.forEach(c=>c.rotation.z+=dt*2);
+ const active=balls;
+ active.forEach((b,index)=>{
+   const p1=index===0;
+   const forward=(keys[p1?'KeyW':'ArrowUp']?1:0)-(keys[p1?'KeyS':'ArrowDown']?1:0);
+   const side=(keys[p1?'KeyD':'ArrowRight']?1:0)-(keys[p1?'KeyA':'ArrowLeft']?1:0);
+   b.vz-=forward*dt*13;b.vx+=side*dt*15;
+   if(keys[p1?'Space':'Numpad0']&&b.grounded){b.vy=7;b.grounded=false}
+   b.vz*=Math.pow(.985,dt*60);b.vx*=Math.pow(.91,dt*60);
+   b.x+=b.vx*dt;b.z+=b.vz*dt;
+   b.vy-=18*dt;b.group.position.y+=b.vy*dt;
+   if(b.group.position.y<=0){b.group.position.y=0;b.vy=0;b.grounded=true}
+   b.group.position.x=b.x;b.group.position.z=b.z;
+   b.sphere.rotation.x+=b.vz*dt*1.2;b.sphere.rotation.z-=b.vx*dt*1.2;
+   b.ring.rotation.z+=dt*1.5;
+   // Collect nearby coins.
+   coins=coins.filter(c=>{if(c.position.distanceTo(new THREE.Vector3(b.x,b.group.position.y+.7,b.z))<1.15){scene.remove(c);coinCount++;document.querySelector('#coins').textContent=coinCount;return false}return true});
+   // Collision with blocks slows the ball.
+   hazards.forEach(h=>{if(Math.abs(h.position.z-b.z)<.9&&Math.abs(h.position.x-b.x)<1.05&&b.group.position.y<1.5){b.vz*= -.35;b.vx+=(b.x-h.position.x)*2}});
+   if(b.z< -100){b.z=10;b.x=0;b.vz=0;b.vx=0;b.group.position.y=0;document.querySelector('#message').textContent='Splash! Back to the start — try again!'}
+ });
+ const lead=balls[0];
+ camera.position.lerp(new THREE.Vector3(lead.x*.55,8.5,lead.z+12),.06);
+ camera.lookAt(lead.x,0,lead.z-7);
+ if(lead.z< -98&&!won){won=true;document.querySelector('#message').textContent='FINISH! Great race! Press R to play again.'}
+}
+function animate(t){requestAnimationFrame(animate);const dt=Math.min((t-lastTime)/1000||0,.04);lastTime=t;update(dt);renderer.render(scene,camera)}
+animate(0);
+addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight)});
+</script>
+</body></html>
